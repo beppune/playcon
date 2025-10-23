@@ -1,6 +1,8 @@
 use std::ffi::OsStr;
+use std::io::Write;
 
-use interprocess::local_socket::{traits::Listener, *};
+use interprocess::local_socket::{Listener, *};
+use interprocess::local_socket::traits::Listener as Listen;
 
 enum Request {
     Accept,
@@ -18,15 +20,17 @@ impl Reactor {
         }
     }
 
-    fn accept<F>(&mut self, hn:F)
-        where F: Fn() -> Option<Request>
+    fn accept<F>(&mut self, ls:&mut Listener, hn:F)
+        where F: Fn(Stream) -> Option<Request>
     {
 
-        let req = hn();
-
-        match req {
-            Some(r) => self.q.push( r ),
-            None => {},
+        match ls.accept() {
+            Ok(stream) => {
+                if let Some(req) = hn(stream) {
+                    self.q.push( req );
+                }
+            },
+            Err(_) => todo!(),
         }
 
     }
@@ -35,19 +39,17 @@ impl Reactor {
 
 fn main() {
 
-    let mut option = ListenerOptions::new()
+    let option = ListenerOptions::new()
         .nonblocking(ListenerNonblockingMode::Stream)
         .name( OsStr::new("ThePipe").to_ns_name::<GenericNamespaced>().unwrap() );
     let mut pipe = option.create_sync().unwrap();
     
     let mut reactor = Reactor::new();
-    reactor.accept(||{
-        println!("client accepted");
+    reactor.accept(&mut pipe, |mut stream:Stream|{
+        println!("Client accepted");
+        stream.write_all(b"Hello\n").unwrap();
         None
     });
-
-    pipe.accept().unwrap();
-
 
     // wait for event (block)
     // dispatch event to proper handler
