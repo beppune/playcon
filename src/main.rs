@@ -1,6 +1,5 @@
-use std::error::Error;
 use std::ffi::OsStr;
-use std::io::{Error as IoError, Write};
+use std::io::Write;
 
 use interprocess::local_socket::{Listener, *};
 use interprocess::local_socket::traits::Listener as Listen;
@@ -8,12 +7,17 @@ use interprocess::local_socket::traits::Listener as Listen;
 use std::io::Result;
 
 enum Request {
-    Log(String)
+    Log(String),
+    Write(Stream, String),
 }
 
 impl Request {
     fn log(s:&str) -> Option<Request> {
         Some( Request::Log(String::from(s)) )
+    }
+
+    fn write(stream: Stream, buf: String) -> Option<Request> {
+        Some( Request::Write(stream, buf) )
     }
 }
 
@@ -52,6 +56,9 @@ impl Reactor {
         if let Some(req) = self.q.pop() {
             match req {
                 Request::Log(buf) => println!("Log: {buf}"),
+                Request::Write(mut stream, buf) => {
+                    stream.write_all(buf.as_bytes()).unwrap();
+                },
             }
         }
 
@@ -69,15 +76,16 @@ fn main() {
     let mut reactor = Reactor::new();
     reactor.accept(&mut pipe, |res:Result<Stream>|{
         match res {
-            Ok(mut stream) => {
-                stream.write_all( b"Ciaone\n" ).unwrap();
-                Request::log("Client says bye!")
+            Ok(stream) => {
+                Request::write(stream, String::from("Client says bye!"))
             },
-            Err(err) => Request::log(err.description()),
+            Err(err) => Request::log(err.to_string().as_str()),
         }
     });
 
-    reactor.dispatch();
+    loop {
+        reactor.dispatch();
+    }
 
     // wait for event (block)
     // dispatch event to proper handler
