@@ -1,47 +1,47 @@
+use std::ffi::OsStr;
 
-trait EventSource {}
+use interprocess::local_socket::*;
 
-struct AcceptClient {}
-impl AcceptClient {
-    fn new() -> Self {
-        Self {  }
-    }
+enum Request {
+    Accept,
+    Read,
 }
-struct Reactor {}
+
+struct Reactor {
+    q:Vec<Request>
+}
+
 impl Reactor {
-    fn new(pipeserver: &u8) -> Self {
-        Self {  }
+    fn new() -> Self {
+        Self { 
+            q: vec![],
+        }
     }
 
-    fn enqueue(&self, es: AcceptClient, hn: impl Fn(&mut u8))  {
-        todo!()
+    fn accept<F>(&mut self, hn:F)
+        where F: Fn() -> Option<Request>
+    {
+
+        let req = hn();
+
+        match req {
+            Some(r) => self.q.push( r ),
+            None => {},
+        }
+
     }
 
-    fn accept(&self, hn: impl Fn(&mut u8))  {
-        todo!()
-    }
 }
-
-impl EventSource for AcceptClient {}
 
 fn main() {
 
-    let pipeserver:u8 = 0;
+    let mut option = ListenerOptions::new()
+        .nonblocking(ListenerNonblockingMode::Both)
+        .name( OsStr::new("ThePipe").to_ns_name::<GenericNamespaced>().unwrap() );
+    let pipe = option.create_sync().unwrap();
 
-    let mut reac = Reactor::new(&pipeserver);
-    let es = AcceptClient::new();
-    let mut hn = |pipe:&mut u8| {
-        // write to pipe
-    };
-    reac.enqueue(es, hn);
-    reac.accept(hn);
-    reac.accept(|pipe:&mut u8|{
-        //write to pipe
-    });
+    
 
-    // Main loop
-    //
-    // register initial handler
     // wait for event (block)
     // dispatch event to proper handler
     // eventually enqueue other handlers
