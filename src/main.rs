@@ -68,8 +68,10 @@ impl Reactor {
         }
     }
 
-    fn accept(&mut self, handler:AcceptHandler) {
-        self.handlers.push( Handler::OnAccept(handler) );
+    fn accept<T>(&mut self, handler:T)
+        where T: Fn(Stream) + 'static
+    {
+        self.handlers.push( Handler::OnAccept(Box::new(handler)) );
     }
 
 }
@@ -85,9 +87,9 @@ fn main() {
             let listener = option.create_sync().unwrap();
 
             let mut reactor = Reactor::new(listener);
-            reactor.accept( Box::new(|mut stream:Stream| {
+            reactor.accept( |mut stream| {
                 stream.write_all(b"Ciaone!").unwrap();
-            }));
+            });
             // wait for event (block)
             // dispatch event to proper handler
             // eventually enqueue other handlers
