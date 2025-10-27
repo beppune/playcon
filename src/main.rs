@@ -1,51 +1,96 @@
 use std::collections::VecDeque;
 use std::ffi::OsStr;
-use std::io::Write;
+use std::io::{ErrorKind, Write};
 
 use interprocess::local_socket::{Listener, *};
 use interprocess::local_socket::traits::Listener as Listen;
 
 use std::io::Result;
 
-type AcceptHandler = Box<(dyn Fn(Stream) -> Option<Event>)>;
+type AcceptHandler = Box<dyn Fn(Stream)>;
+
+enum Handler {
+    OnAccept(AcceptHandler),
+}
 
 enum Event {
-    OnAccept(Stream, AcceptHandler),
+    Accept(Stream),
+}
+
+struct Reactor {
+    listener: Listener,
+    queue: VecDeque<Event>,
+    handlers: Vec<Handler>,
+}
+
+impl Reactor {
+    fn new(listener: Listener) -> Self {
+        Self {
+            listener,
+            queue: VecDeque::new(),
+            handlers: vec![],
+        }
+    }
+
+    fn run(&mut self) {
+
+        if self.handlers.is_empty() {
+            return;
+        }
+
+        loop {
+            match self.listener.accept() {
+                Ok(stream) => { 
+                    self.queue.push_back( Event::Accept(stream) );
+                    break;
+                },
+                Err(err) if err.kind() == ErrorKind::WouldBlock => {},
+                Err(_) => {},
+            }
+        }
+
+        // dispatch
+        while let Some(event) = self.queue.pop_front() {
+            match event {
+                Event::Accept(stream) => {
+                    for handler in &self.handlers {
+                        match handler {
+                            Handler::OnAccept(callback) => {
+                                // further get return value
+                                // to enque
+                                callback(stream);
+                                break;
+                            },
+                        }
+                    }
+                },
+            }
+        }
+    }
+
+    fn accept(&mut self, handler:AcceptHandler) {
+        self.handlers.push( Handler::OnAccept(handler) );
+    }
+
 }
 
 fn main() {
 
-    let mut queue:VecDeque<Event> = VecDeque::new();
+    // let mut queue:VecDeque<Event> = VecDeque::new();
 
     let option = ListenerOptions::new()
         .nonblocking(ListenerNonblockingMode::Stream)
         .name( OsStr::new("ThePipe")
             .to_ns_name::<GenericNamespaced>().unwrap() );
-    let mut listener = option.create_sync().unwrap();
+            let listener = option.create_sync().unwrap();
 
-    match listener.accept() {
-        Ok(stream) => {
-            let ev = Event::OnAccept(stream, Box::new(|mut stream|{
-                stream.write_all(b"Ciaone").unwrap();
-                None
+            let mut reactor = Reactor::new(listener);
+            reactor.accept( Box::new(|mut stream:Stream| {
+                stream.write_all(b"Ciaone!").unwrap();
             }));
-            queue.push_back( ev );
-        },
-        Err(err) => println!("{err}"),
-    }
+            // wait for event (block)
+            // dispatch event to proper handler
+            // eventually enqueue other handlers
 
-    match queue.pop_front() {
-        Some(ev) => match ev {
-            Event::OnAccept(stream, handler) => {
-                if let Some(enq) = handler(stream) {
-                    queue.push_back( enq );
-                }
-            },
-        },
-        None => {},
-    } 
-    // wait for event (block)
-    // dispatch event to proper handler
-    // eventually enqueue other handlers
-
+            reactor.run();
 }
