@@ -6,15 +6,25 @@ use interprocess::local_socket::{Listener, *};
 use interprocess::local_socket::traits::Listener as Listen;
 
 use std::io::Result;
+use std::io::Read;
 
 type AcceptHandler = Box<dyn Fn(Stream) -> Option<Event>>;
+type ReadHandler = Box<dyn Fn(Stream,String) -> Option<Event>>;
 
 enum Handler {
     OnAccept(AcceptHandler),
+    OnRead(ReadHandler),
 }
 
 enum Event {
     Accept(Stream),
+    Read(Stream,String),
+}
+
+impl Event {
+    fn read(stream:Stream, string:String) -> Option<Event> {
+        Some( Event::Read(stream, string) )
+    }
 }
 
 struct Reactor {
@@ -59,6 +69,13 @@ impl Reactor {
                         }
                     }
                 },
+                Event::Read(stream,string) => {
+                    if let Some(Handler::OnRead(callback)) = &self.handlers.iter().find( |h| matches!(h, Handler::OnRead(_)) ) {
+                        if let Some(ev) = callback(stream,string) {
+                            self.queue.push_back( ev );
+                        }
+                    }
+                }
             }
         }
     }
@@ -67,6 +84,12 @@ impl Reactor {
         where T: Fn(Stream) -> Option<Event> + 'static
     {
         self.handlers.push( Handler::OnAccept(Box::new(handler)) );
+    }
+
+    fn read<T>(&mut self, handler:T)
+        where T: Fn(Stream,String) -> Option<Event> + 'static
+    {
+        self.handlers.push( Handler::OnRead(Box::new(handler)) );
     }
 
 }
@@ -82,9 +105,26 @@ fn main() {
             let listener = option.create_sync().unwrap();
 
             let mut reactor = Reactor::new(listener);
+
+            reactor.read( |mut stream, mut string| {
+                match stream.read_to_string(&mut string) {
+                    Ok(amount) if amount == 0 => {
+                        Event::read(stream, string)
+                    },
+                    Ok(amount) => {
+                        println!("Red {amount}");
+                        None
+                    },
+                    Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => {
+                        Event::read(stream, string)
+                    },
+                    Err(_) => None
+                }
+            });
+
             reactor.accept( |mut stream| {
-                stream.write_all(b"Ciaone!").unwrap();
-                None
+                stream.write_all(b"Ciaone!\n").unwrap();
+                Event::read(stream, String::new())
             });
             // wait for event (block)
             // dispatch event to proper handler
