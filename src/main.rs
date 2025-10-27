@@ -7,7 +7,7 @@ use interprocess::local_socket::traits::Listener as Listen;
 
 use std::io::Result;
 
-type AcceptHandler = Box<dyn Fn(Stream)>;
+type AcceptHandler = Box<dyn Fn(Stream) -> Option<Event>>;
 
 enum Handler {
     OnAccept(AcceptHandler),
@@ -53,14 +53,9 @@ impl Reactor {
         while let Some(event) = self.queue.pop_front() {
             match event {
                 Event::Accept(stream) => {
-                    for handler in &self.handlers {
-                        match handler {
-                            Handler::OnAccept(callback) => {
-                                // further get return value
-                                // to enque
-                                callback(stream);
-                                break;
-                            },
+                    if let Some(Handler::OnAccept(callback)) = &self.handlers.iter().find( |h| matches!(h, Handler::OnAccept(_)) ) {
+                        if let Some(ev) = callback(stream) {   
+                            self.queue.push_back( ev ); 
                         }
                     }
                 },
@@ -69,7 +64,7 @@ impl Reactor {
     }
 
     fn accept<T>(&mut self, handler:T)
-        where T: Fn(Stream) + 'static
+        where T: Fn(Stream) -> Option<Event> + 'static
     {
         self.handlers.push( Handler::OnAccept(Box::new(handler)) );
     }
@@ -89,6 +84,7 @@ fn main() {
             let mut reactor = Reactor::new(listener);
             reactor.accept( |mut stream| {
                 stream.write_all(b"Ciaone!").unwrap();
+                None
             });
             // wait for event (block)
             // dispatch event to proper handler
