@@ -9,7 +9,7 @@ use std::io::Result;
 use std::io::Read;
 
 type AcceptHandler = Box<dyn Fn(Stream) -> Option<Event>>;
-type ReadHandler = Box<dyn Fn(usize) -> Option<Event>>;
+type ReadHandler = Box<dyn Fn(Stream,usize) -> Option<Event>>;
 
 enum Handler {
     OnAccept(AcceptHandler),
@@ -77,7 +77,7 @@ impl Reactor {
                                 ev = Event::read(stream,string);
                             },
                             Ok(amount) => {
-                                ev = callback(amount);
+                                ev = callback(stream, amount);
                             },
                             Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => {
                                 ev = Event::read(stream, string);
@@ -102,7 +102,7 @@ impl Reactor {
     }
 
     fn read<T>(&mut self, handler:T)
-        where T: Fn(usize) -> Option<Event> + 'static
+        where T: Fn(Stream,usize) -> Option<Event> + 'static
     {
         self.handlers.push( Handler::OnRead(Box::new(handler)) );
     }
@@ -121,8 +121,9 @@ fn main() {
 
             let mut reactor = Reactor::new(listener);
 
-            reactor.read( |amount| {
+            reactor.read( |mut stream, amount| {
                 println!("Red {amount}");
+                stream.write_all(b"Red {amount}").unwrap();
                 None
             });
 
