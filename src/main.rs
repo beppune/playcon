@@ -9,7 +9,7 @@ use std::io::Result;
 use std::io::Read;
 
 type AcceptHandler = Box<dyn Fn(Stream) -> Option<Event>>;
-type ReadHandler = Box<dyn Fn(Stream,String) -> Option<Event>>;
+type ReadHandler = Box<dyn Fn(usize) -> Option<Event>>;
 
 enum Handler {
     OnAccept(AcceptHandler),
@@ -69,10 +69,25 @@ impl Reactor {
                         }
                     }
                 },
-                Event::Read(stream,string) => {
+                Event::Read(mut stream, mut string) => {
                     if let Some(Handler::OnRead(callback)) = &self.handlers.iter().find( |h| matches!(h, Handler::OnRead(_)) ) {
-                        if let Some(ev) = callback(stream,string) {
-                            self.queue.push_back( ev );
+                        let ev:Option<Event>;
+                        match stream.read_to_string(&mut string) {
+                            Ok(amount) if amount == 0 => {
+                                ev = Event::read(stream,string);
+                            },
+                            Ok(amount) => {
+                                ev = callback(amount);
+                            },
+                            Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => {
+                                ev = Event::read(stream, string);
+                            },
+                            Err(_) => {
+                                ev = None;
+                            }
+                        }
+                        if let Some(e) = ev {
+                            self.queue.push_back( e );
                         }
                     }
                 }
@@ -87,7 +102,7 @@ impl Reactor {
     }
 
     fn read<T>(&mut self, handler:T)
-        where T: Fn(Stream,String) -> Option<Event> + 'static
+        where T: Fn(usize) -> Option<Event> + 'static
     {
         self.handlers.push( Handler::OnRead(Box::new(handler)) );
     }
@@ -106,20 +121,9 @@ fn main() {
 
             let mut reactor = Reactor::new(listener);
 
-            reactor.read( |mut stream, mut string| {
-                match stream.read_to_string(&mut string) {
-                    Ok(amount) if amount == 0 => {
-                        Event::read(stream, string)
-                    },
-                    Ok(amount) => {
-                        println!("Red {amount}");
-                        None
-                    },
-                    Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => {
-                        Event::read(stream, string)
-                    },
-                    Err(_) => None
-                }
+            reactor.read( |amount| {
+                println!("Red {amount}");
+                None
             });
 
             reactor.accept( |mut stream| {
