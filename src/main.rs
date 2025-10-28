@@ -10,20 +10,27 @@ use std::io::Read;
 
 type AcceptHandler = Box<dyn Fn(Stream) -> Option<Event>>;
 type ReadHandler = Box<dyn Fn(Stream,usize) -> Option<Event>>;
+type WriteHandler = Box<dyn Fn(Stream,usize) -> Option<Event>>;
 
 enum Handler {
     OnAccept(AcceptHandler),
     OnRead(ReadHandler),
+    OnWrite(WriteHandler),
 }
 
 enum Event {
     Accept(Stream),
     Read(Stream,String),
+    Write(Stream,String),
 }
 
 impl Event {
     fn read(stream:Stream, string:String) -> Option<Event> {
         Some( Event::Read(stream, string) )
+    }
+
+    fn write(stream:Stream, string:String) -> Option<Event> {
+        Some( Event::Write(stream, string) )
     }
 }
 
@@ -90,7 +97,29 @@ impl Reactor {
                             self.queue.push_back( e );
                         }
                     }
-                }
+                },
+                Event::Write(mut stream, string) => {
+                    if let Some(Handler::OnWrite(callback)) = &self.handlers.iter().find( |h| matches!(h, Handler::OnWrite(_)) ) {
+                        let ev:Option<Event>;
+                        match stream.write(&string.as_bytes()) {
+                            Ok(amount) if amount == 0 => {
+                                ev = Event::write(stream, string);
+                            },
+                            Ok(amount) => {
+                                ev = callback(stream, amount);
+                            },
+                            Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => {
+                                ev = Event::write(stream, string);
+                            },
+                            Err(_) => {
+                                ev = None;
+                            },
+                        }
+                        if let Some(e) = ev {
+                            self.queue.push_back( e );
+                        }
+                    }
+                },
             }
         }
     }
@@ -107,6 +136,11 @@ impl Reactor {
         self.handlers.push( Handler::OnRead(Box::new(handler)) );
     }
 
+    fn write<T>(&mut self, handler:T)
+        where T: Fn(Stream,usize) -> Option<Event> + 'static
+    {
+        self.handlers.push( Handler::OnWrite(Box::new(handler)) );
+    }
 }
 
 fn main() {
@@ -121,10 +155,14 @@ fn main() {
 
             let mut reactor = Reactor::new(listener);
 
-            reactor.read( |mut stream, amount| {
+            reactor.write( |stream, amount| {
+                println!("Write some bytes {amount}");
+                Event::read(stream, String::new())
+            });
+
+            reactor.read( |stream, amount| {
                 println!("Red {amount}");
-                stream.write_all(b"Red {amount}").unwrap();
-                None
+                Event::write(stream, String::from("Red some amount"))
             });
 
             reactor.accept( |mut stream| {
